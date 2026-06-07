@@ -1,0 +1,15 @@
+# Environment variables (contains API keys — never commit!)
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
