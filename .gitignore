@@ -21,3 +21,4 @@ package-lock.json
 # Scratch files and HTML dumps
 scratch/
 *.html
+push_to_github.py
