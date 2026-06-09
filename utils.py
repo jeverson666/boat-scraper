@@ -50,25 +50,52 @@ def get_browser_ws_url(country_code="us", provider=None):
         # Generic fallback
         return os.getenv("CDP_WS_URL", "")
 
-async def bypass_turnstile_if_present(page, max_wait_sec=30):
+async def bypass_turnstile_if_present(page, max_wait_sec=30, target_selector=None):
     """
     Monitors the page for Cloudflare or Turnstile challenge page.
-    Waits until the challenge is solved by the browser.
+    Waits until the challenge is solved by the browser and target_selector (if any) is present.
     """
     print("⏳ Monitoring WAF challenge...")
+    challenge_indicators = [
+        "just a moment", "un momento", "um momento", "un instant", 
+        "einen moment", "tunggu sebentar", "access denied", 
+        "security verification", "verify you are human", "cloudflare", 
+        "checking your browser", "attention required", "robot", 
+        "captcha", "challenge", "chờ một chút", "لحظة", "बस कुछ पल"
+    ]
+    has_challenge = True
     for i in range(1, (max_wait_sec // 2) + 1):
         await page.wait_for_timeout(2000)
         title = await page.title()
         print(f"  [{i*2}s] Title: '{title}', URL: '{page.url}'")
-        if (
-            title 
-            and "Just a moment" not in title 
-            and "Access Denied" not in title 
-            and "Tunggu sebentar" not in title 
-            and "security verification" not in title.lower()
-        ):
-            print("🎉 Challenge bypassed/not present!")
-            return True
+        title_lower = title.lower() if title else ""
+        
+        has_challenge = any(indicator in title_lower for indicator in challenge_indicators)
+        
+        if target_selector:
+            try:
+                element = await page.query_selector(target_selector)
+                if element and not has_challenge:
+                    print(f"🎉 Challenge bypassed: '{target_selector}' is present!")
+                    return True
+            except Exception:
+                pass
+        else:
+            if title and not has_challenge:
+                print("🎉 Challenge bypassed/not present!")
+                return True
+                
+    if target_selector:
+        try:
+            element = await page.query_selector(target_selector)
+            if element and not has_challenge:
+                print(f"🎉 Challenge bypassed (timed out, but selector '{target_selector}' found)!")
+                return True
+            elif element and has_challenge:
+                print(f"⚠️ Timeout: Selector found but WAF challenge/block page is still active ('{title}').")
+        except Exception:
+            pass
+            
     return False
 
 def update_field_by_label(data, lbl, val):
@@ -151,8 +178,8 @@ def update_field_by_label(data, lbl, val):
         if "fuel" not in lbl and "water" not in lbl:
             if not data["passenger_capacity"]:
                 data["passenger_capacity"] = val
-    elif ("loa" in lbl or "length" in lbl) and "load" not in lbl:
-        if not data["length_loa"] or "overall" in lbl or "loa" in lbl:
+    elif ("loa" in lbl or "length" in lbl) and "load" not in lbl and "trailer" not in lbl:
+        if not data["length_loa"] or "overall" in lbl or "loa" in lbl or lbl == "length":
             data["length_loa"] = val
     elif "beam" in lbl:
         if not data["beam"]:
@@ -193,6 +220,48 @@ def update_field_by_label(data, lbl, val):
     elif "type" in lbl:
         if not data["boat_type"] or data["boat_type"].lower() in ["power", "sail", "other", "power/sail"]:
             data["boat_type"] = val
+def format_length(length_str):
+    if not length_str:
+        return ""
+    length_str = " ".join(length_str.split()).strip()
+    
+    # 1. Inches only (e.g. 102", 60 in, 96 inch, 102in)
+    match_inches = re.search(r'^(\d+(?:\.\d+)?)\s*(?:in|inch|inches|")\s*$', length_str, re.IGNORECASE)
+    if match_inches:
+        try:
+            val_in = float(match_inches.group(1))
+            val_ft = val_in / 12.0
+            if val_in % 12 == 0:
+                return str(int(val_ft))
+            feet = int(val_in // 12)
+            inches = round(val_in % 12, 1)
+            if inches.is_integer():
+                inches = int(inches)
+            if inches == 0:
+                return str(feet)
+            return f"{feet}'{inches}"
+        except Exception:
+            pass
+
+    # 2. Feet and inches (e.g. 25' 6", 25 ft 6 in, 25' 6, 76 ft 3 in)
+    match_ft_in = re.search(r"(\d+)\s*(?:'|ft|feet)\s*(\d+(?:\.\d+)?)\s*(?:\"|in|inches|'')?", length_str, re.IGNORECASE)
+    if match_ft_in:
+        inches = float(match_ft_in.group(2))
+        if inches.is_integer():
+            inches = int(inches)
+        return f"{match_ft_in.group(1)}'{inches}"
+    
+    # 3. Decimal feet (e.g. 16.6, 16.6 ft, 16.6')
+    match_decimal = re.search(r'^(\d+\.\d+)\s*(?:ft|m|feet|\'|\")?$', length_str, re.IGNORECASE)
+    if match_decimal:
+        return match_decimal.group(1)
+        
+    # 4. Pure feet (e.g. 16 ft, 16 feet, 16', 38 ft)
+    match_pure = re.search(r'^(\d+)\s*(?:ft|feet|\'|\"|ft)?$', length_str, re.IGNORECASE)
+    if match_pure:
+        return match_pure.group(1)
+        
+    return length_str
 
 def clean_engine_make_type(val):
     """

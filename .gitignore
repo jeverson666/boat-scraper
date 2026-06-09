@@ -10,6 +10,14 @@ __pycache__/
 venv/
 .venv/
 
+# Node.js dependencies
+node_modules/
+package-lock.json
+
 # IDE
 .vscode/
 .idea/
+
+# Scratch files and HTML dumps
+scratch/
+*.html
